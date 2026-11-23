@@ -692,8 +692,6 @@ local Library do
             local StartPosition = nil 
             local StartSize = nil
 
-            local EdgeThickness = 4
-
             local Resizer = {
                 Minimum = Minimum,
                 Maximum = Maximum,
@@ -702,31 +700,6 @@ local Library do
                 LastSize = Vector2New(DefaultSize.X, DefaultSize.Y),
                 Grip = nil,
             }
-
-            local Edges = { }
-            local GripLines = { }
-
-            local MakeEdge = function(Position, Size, Side)
-                local Button = Instances:Create("TextButton", {
-                    Name = "\0",
-                    Size = Size,
-                    Position = Position,
-                    BackgroundColor3 = FromRGB(166, 147, 243),
-                    BackgroundTransparency = 1,
-                    Text = "",
-                    BorderSizePixel = 0,
-                    AutoButtonColor = false,
-                    Parent = Gui,
-                    ZIndex = 99999,
-                })  Button:AddToTheme({BackgroundColor3 = "Accent"})
-
-                TableInsert(Edges, { Button = Button, Side = Side })
-            end
-
-            MakeEdge(UDim2New(0, 0, 0, 0), UDim2New(0, EdgeThickness, 1, 0), "L")
-            MakeEdge(UDim2New(1, -EdgeThickness, 0, 0), UDim2New(0, EdgeThickness, 1, 0), "R")
-            MakeEdge(UDim2New(0, 0, 0, 0), UDim2New(1, 0, 0, EdgeThickness), "T")
-            MakeEdge(UDim2New(0, 0, 1, -EdgeThickness), UDim2New(1, 0, 0, EdgeThickness), "B")
 
             -- Corner grip
             local Grip = Instances:Create("TextButton", {
@@ -743,35 +716,6 @@ local Library do
             })
 
             Resizer.Grip = Grip
-
-            for Index = 1, 3 do
-                local Line = Instances:Create("Frame", {
-                    Parent = Grip.Instance,
-                    Name = "\0",
-                    AnchorPoint = Vector2New(0.5, 0.5),
-                    Position = UDim2New(1, -6 - (Index - 1) * 5, 1, -6 - (Index - 1) * 5),
-                    Size = UDim2New(0, 4 + Index * 3, 0, 1),
-                    BorderSizePixel = 0,
-                    BackgroundColor3 = FromRGB(240, 240, 240),
-                    BackgroundTransparency = 0.5,
-                    Rotation = 45,
-                    ZIndex = 100000,
-                })
-
-                TableInsert(GripLines, Line)
-            end
-
-            Grip:OnHover(function()
-                for Index, Line in GripLines do
-                    Line:Tween(nil, {BackgroundColor3 = Library.Theme.Accent, BackgroundTransparency = 0})
-                end
-            end)
-
-            Grip:OnHoverLeave(function()
-                for Index, Line in GripLines do
-                    Line:Tween(nil, {BackgroundColor3 = Library.Theme.Text, BackgroundTransparency = 0.5})
-                end
-            end)
 
             local BeginResizing = function(Side)
                 Resizing = true 
@@ -820,14 +764,6 @@ local Library do
                 LastGripPress = Now
                 BeginResizing("BR")
             end)
-
-            for Index, Value in Edges do 
-                Value.Button:Connect("InputBegan", function(Input)
-                    if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
-                        BeginResizing(Value.Side)
-                    end
-                end)
-            end
 
             Library:Connect(UserInputService.InputEnded, function(Input)
                 if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
@@ -901,10 +837,6 @@ local Library do
             end
 
             function Resizer:SetResizable(Bool)
-                for Index, Value in Edges do
-                    Value.Button.Instance.Visible = Bool
-                end
-
                 Grip.Instance.Visible = Bool
             end
 
@@ -2703,13 +2635,26 @@ local Library do
                     Items["MainFrame"]:Tween(TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Position = UDim2New(StartPosition.X.Scale, StartPosition.X.Offset + DragDelta.X, StartPosition.Y.Scale, StartPosition.Y.Offset + DragDelta.Y)})
                 end
     
-                Items["MainFrame"]:Connect("InputBegan", function(Input)
+                Items["DragBar"] = Instances:Create("TextButton", {
+                    Parent = Items["MainFrame"].Instance,
+                    Name = "\0",
+                    Text = "",
+                    AutoButtonColor = false,
+                    BackgroundTransparency = 1,
+                    BorderSizePixel = 0,
+                    Position = UDim2New(0, 0, 0, 0),
+                    Size = UDim2New(1, -100, 0, 40),
+                    ZIndex = 3,
+                    BackgroundColor3 = FromRGB(255, 255, 255)
+                })
+
+                Items["DragBar"]:Connect("InputBegan", function(Input)
                     if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
                         Dragging = true
-    
+
                         DragStart = Input.Position
                         StartPosition = Gui.Position
-    
+
                         Input.Changed:Connect(function()
                             if Input.UserInputState == Enum.UserInputState.End then
                                 Dragging = false
@@ -2718,21 +2663,6 @@ local Library do
                     end
                 end)
 
-                Items["LeftTabs"]:Connect("InputBegan", function(Input)
-                    if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
-                        Dragging = true
-    
-                        DragStart = Input.Position
-                        StartPosition = Gui.Position
-    
-                        Input.Changed:Connect(function()
-                            if Input.UserInputState == Enum.UserInputState.End then
-                                Dragging = false
-                            end
-                        end)
-                    end
-                end)
-    
                 Library:Connect(UserInputService.InputChanged, function(Input)
                     if Input.UserInputType == Enum.UserInputType.MouseMovement or Input.UserInputType == Enum.UserInputType.Touch then
                         if Dragging then
@@ -3862,6 +3792,10 @@ local Library do
             end
 
             Library:Connect(UserInputService.InputBegan, function(Input)
+                if UserInputService:GetFocusedTextBox() then
+                    return
+                end
+
                 if tostring(Input.KeyCode) == Library.MenuKeybind or tostring(Input.UserInputType) == Library.MenuKeybind then
                     Window:SetOpen(not Window.IsOpen)
                 end
@@ -3878,7 +3812,7 @@ local Library do
 
             if CurrentCamera then
                 Library:Connect(CurrentCamera:GetPropertyChangedSignal("ViewportSize"), function()
-                    if Window.AutoResize then
+                    if Window.AutoResize and not UserInputService:GetFocusedTextBox() then
                         Window:FitToViewport()
                     end
                 end)
@@ -4344,29 +4278,21 @@ local Library do
                     FontFace = Library.Font,
                     TextColor3 = FromRGB(240, 240, 240),
                     TextTransparency = 0.3,
-                    Text = SubTab.Name,
+                    Text = "",
                     AutoButtonColor = false,
                     BackgroundTransparency = 1,
                     BackgroundColor3 = FromRGB(27, 26, 29),
                     Size = UDim2New(0, 0, 0, 28),
-                    AutomaticSize = Enum.AutomaticSize.X,
                     BorderSizePixel = 0,
                     ZIndex = 4,
                     TextSize = 13,
                     LayoutOrder = #Page.SubTabs + 1
-                })  Button:AddToTheme({TextColor3 = "Text"})
+                })
 
                 Instances:Create("UICorner", {
                     Parent = Button.Instance,
                     Name = "\0",
                     CornerRadius = UDimNew(0, 4)
-                })
-
-                local Padding = Instances:Create("UIPadding", {
-                    Parent = Button.Instance,
-                    Name = "\0",
-                    PaddingLeft = UDimNew(0, SubTab.Icon and 32 or 12),
-                    PaddingRight = UDimNew(0, 12)
                 })
 
                 SubTab.Items["Icon"] = Instances:Create("ImageLabel", {
@@ -4383,6 +4309,41 @@ local Library do
                     ZIndex = 5,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
+
+                SubTab.Items["Text"] = Instances:Create("TextLabel", {
+                    Parent = Button.Instance,
+                    Name = "\0",
+                    FontFace = Library.Font,
+                    TextColor3 = FromRGB(240, 240, 240),
+                    TextTransparency = 0.3,
+                    Text = SubTab.Name,
+                    AutomaticSize = Enum.AutomaticSize.X,
+                    Size = UDim2New(0, 0, 0, 15),
+                    AnchorPoint = Vector2New(0, 0.5),
+                    Position = UDim2New(0, SubTab.Icon and 32 or 12, 0.5, 0),
+                    BackgroundTransparency = 1,
+                    BorderSizePixel = 0,
+                    ZIndex = 5,
+                    TextSize = 13,
+                    BackgroundColor3 = FromRGB(255, 255, 255)
+                })  SubTab.Items["Text"]:AddToTheme({TextColor3 = "Text"})
+
+                local function UpdateButtonSize()
+                    local TextWidth = SubTab.Items["Text"].Instance.TextBounds.X
+                    local Left = SubTab.Icon and 32 or 12
+
+                    if TextWidth <= 0 then
+                        TextWidth = #SubTab.Name * 8
+                    end
+
+                    Button.Instance.Size = UDim2New(0, Left + TextWidth + 12, 0, 28)
+                end
+
+                UpdateButtonSize()
+
+                SubTab.Items["Text"].Instance:GetPropertyChangedSignal("TextBounds"):Connect(function()
+                    UpdateButtonSize()
+                end)
 
                 SubTab.Items["Button"] = Button
 
@@ -4452,18 +4413,19 @@ local Library do
 
                 function SubTab:SetIcon(Icon)
                     SubTab.Icon = Icon
-                    Padding.Instance.PaddingLeft = UDimNew(0, Icon and 32 or 12)
                     SubTab.Items["Icon"].Instance.Visible = Icon ~= nil
+                    SubTab.Items["Text"].Instance.Position = UDim2New(0, Icon and 32 or 12, 0.5, 0)
+                    UpdateButtonSize()
                     Library:ApplyIconAsync(SubTab.Items["Icon"], Icon)
                 end
 
                 function SubTab:UpdateButton(Active)
                     if Active then
                         Button:Tween(nil, {BackgroundTransparency = 0, BackgroundColor3 = Library.Theme.Accent})
-                        Button:Tween(nil, {TextColor3 = FromRGB(0, 0, 0), TextTransparency = 0})
+                        SubTab.Items["Text"]:Tween(nil, {TextColor3 = FromRGB(0, 0, 0), TextTransparency = 0})
                     else
                         Button:Tween(nil, {BackgroundTransparency = 1, BackgroundColor3 = Library.Theme.Element})
-                        Button:Tween(nil, {TextColor3 = Library.Theme.Text, TextTransparency = 0.3})
+                        SubTab.Items["Text"]:Tween(nil, {TextColor3 = Library.Theme.Text, TextTransparency = 0.3})
                     end
 
                     SubTab.Items["Icon"]:Tween(nil, {ImageColor3 = Active and FromRGB(0, 0, 0) or Library.Theme.Text, ImageTransparency = Active and 0 or 0.3})
@@ -7798,6 +7760,10 @@ local Library do
             end)
 
             Library:Connect(UserInputService.InputBegan, function(Input)
+                if UserInputService:GetFocusedTextBox() then
+                    return
+                end
+
                 if Keybind.Value == "None" then
                     return
                 end
@@ -7834,6 +7800,10 @@ local Library do
             end)
 
             Library:Connect(UserInputService.InputEnded, function(Input)
+                if UserInputService:GetFocusedTextBox() then
+                    return
+                end
+
                 if Keybind.Value == "None" then
                     return
                 end

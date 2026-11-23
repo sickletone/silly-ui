@@ -16,7 +16,7 @@ A modern, highly customizable, and optimized UI Library for Roblox scripts. Feat
 *   **Nested Colorpickers:** Colorpickers can be placed *inside* Toggles.
 *   **Sub Tabs:** Pages can contain a sub tab bar, each with its own columns and sections.
 *   **Config Manager:** Create, load, overwrite, delete, refresh, auto-load, and import/export configs through the clipboard.
-*   **Window Resizing:** Drag any edge or the bottom-right corner grip, with an optional Auto Resize mode.
+*   **Window Resizing:** Drag the bottom-right corner grip to resize, with an optional Auto Resize mode.
 *   **Molto Icons:** Use icons from Lucide, Tabler, Heroicons, Phosphor, Fluent, Solar and Material for tabs and sections.
 *   **Editable Sliders:** Double-click a slider value to type an exact number.
 *   **Config System:** Built-in Save/Load system using `writefile`/`readfile`.
@@ -272,7 +272,7 @@ Library.CurrentScale = 1.25
 
 ## 🪟 Window Resizing & Auto Resize
 
-Drag any edge of the window, or the three-line **corner grip** in the bottom-right corner, to resize it. The grip follows the mouse/touch instantly and stops at the minimum size.
+Drag the invisible **corner grip** in the bottom-right corner to resize the window; the header can be dragged to move it. The grip follows the mouse/touch instantly and stops at the minimum size.
 
 ```lua
 -- Double-click the corner grip to restore the default 677x644 size.
@@ -282,7 +282,7 @@ Window:SetAutoResize(false)   -- Stop the window from fitting itself to the scre
 Window:FitToViewport()        -- Shrink/re-center the window inside the current screen
 ```
 
-Auto Resize is enabled by default: when the game window or device orientation changes, the window is shrunk (never below the minimum size) so it stays on screen. Disable it per window with `AutoResize = false`, or from the Settings page toggle.
+Auto Resize is enabled by default: when the game window or device orientation changes, the window is shrunk (never below the minimum size) so it stays on screen. It pauses while a text field is focused so the on-screen keyboard doesn't move the menu. Disable it per window with `AutoResize = false`, or from the Settings page toggle.
 
 ---
 

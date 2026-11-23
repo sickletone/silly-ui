@@ -63,6 +63,10 @@ local Library do
 
         Flags = { },
 
+        -- Molto icon registry (https://molto.pages.dev/icons)
+        IconProvider = "lucide",
+        IconProviders = {"lucide", "tabler", "heroicons", "phosphor", "fluent", "solar", "material"},
+
         Tween = {
             Time = 0.3,
             Style = Enum.EasingStyle.Quad,
@@ -195,6 +199,195 @@ local Library do
     }
 
     Library.Theme = TableClone(Themes["Preset"])
+
+    --// Icons \\--
+    -- Uses the Molto icon registry: https://molto.pages.dev/icons
+    -- Supported providers: lucide, tabler, heroicons, phosphor, fluent, solar, material.
+    -- Icon syntax: "lucide:sword", { Provider = "phosphor", Name = "gear" }, "123456789" or "rbxassetid://123456789".
+    local Molto
+    local MoltoUnavailable = false
+
+    local LoadMolto = function()
+        if Molto then
+            return Molto
+        end
+
+        if MoltoUnavailable then
+            return nil
+        end
+
+        local Success, Result = pcall(function()
+            local Source = game:HttpGet("https://molto.pages.dev/source.lua")
+            local Chunk = (loadstring or load)(Source)
+
+            if not Chunk then
+                return nil
+            end
+
+            return Chunk()
+        end)
+
+        if not Success or type(Result) ~= "table" then
+            MoltoUnavailable = true
+            return nil
+        end
+
+        Molto = Result
+
+        return Molto
+    end
+
+    local IsAssetIcon = function(Value)
+        if type(Value) == "number" then
+            return true
+        end
+
+        return type(Value) == "string" and (Value:match("^%d+$") ~= nil or Value:match("^rbxasset") ~= nil)
+    end
+
+    local ParseIcon = function(Icon)
+        if type(Icon) == "table" then
+            local Provider = Icon.Provider or Icon.provider or Icon.Set or Icon.set or Icon.IconProvider or Icon.iconprovider
+            local Name = Icon.Name or Icon.name or Icon.Icon or Icon.icon or Icon.Id or Icon.id or Icon.Value or Icon.value
+
+            return Provider and StringLower(tostring(Provider)) or nil, Name
+        end
+
+        if type(Icon) == "number" then
+            return nil, Icon
+        end
+
+        if type(Icon) ~= "string" then
+            return nil, nil
+        end
+
+        local Provider, Name = Icon:match("^([%w_]+)[:/](.+)$")
+
+        if Provider and TableFind(Library.IconProviders, StringLower(Provider)) then
+            return StringLower(Provider), Name
+        end
+
+        return nil, Icon
+    end
+
+    function Library:SetIconProvider(Provider)
+        Provider = StringLower(tostring(Provider or "lucide"))
+
+        if not TableFind(self.IconProviders, Provider) then
+            return false
+        end
+
+        -- Allow a retry if Molto failed to load earlier
+        MoltoUnavailable = false
+
+        self.IconProvider = Provider
+        return true
+    end
+
+    function Library:GetIcon(Icon, Provider)
+        local DefaultProvider, Name = ParseIcon(Icon)
+
+        if Name == nil or Name == "" then
+            return nil
+        end
+
+        if IsAssetIcon(Name) then
+            local Id = tostring(Name)
+
+            if StringFind(Id, "^rbxassetid://") or StringFind(Id, "^rbxasset://") then
+                return { Url = Id, IsAsset = true }
+            end
+
+            return { Url = "rbxassetid://" .. Id, IsAsset = true }
+        end
+
+        local Registry = LoadMolto()
+
+        if not Registry then
+            return nil
+        end
+
+        local Success, Asset = pcall(Registry.GetAsset, tostring(Name), Provider or DefaultProvider or self.IconProvider)
+
+        if not Success or type(Asset) ~= "table" then
+            return nil
+        end
+
+        return Asset
+    end
+
+    function Library:ApplyIcon(Item, Icon, Provider)
+        local Image = Item and (Item.Instance or Item)
+
+        if not Image or (not Image:IsA("ImageLabel") and not Image:IsA("ImageButton")) then
+            return false
+        end
+
+        local Asset = self:GetIcon(Icon, Provider)
+
+        if not Asset or not Asset.Url then
+            return false
+        end
+
+        Image.Image = Asset.Url
+
+        if Asset.IsAsset then
+            Image.ImageRectOffset = Vector2New(0, 0)
+            Image.ImageRectSize = Vector2New(0, 0)
+        else
+            Image.ImageRectOffset = Asset.ImageRectOffset or Vector2New(0, 0)
+            Image.ImageRectSize = Asset.ImageRectSize or Vector2New(0, 0)
+        end
+
+        return true
+    end
+
+    local IconQueue = { }
+    local IconWorking = false
+
+    function Library:ApplyIconAsync(Item, Icon, Provider)
+        TableInsert(IconQueue, { Item = Item, Icon = Icon, Provider = Provider })
+
+        if IconWorking then
+            return
+        end
+
+        IconWorking = true
+
+        task.spawn(function()
+            while #IconQueue > 0 do
+                local Task = TableRemove(IconQueue, 1)
+
+                if Task then
+                    pcall(Library.ApplyIcon, Library, Task.Item, Task.Icon, Task.Provider)
+                end
+            end
+
+            IconWorking = false
+        end)
+    end
+
+    function Library:PreloadIcons(Icons, Provider)
+        local Registry = LoadMolto()
+
+        if not Registry or type(Registry.PreloadAsync) ~= "function" then
+            return 0
+        end
+
+        local Names = { }
+
+        for Index, Icon in Icons or { } do
+            local _, Name = ParseIcon(Icon)
+
+            if Name and not IsAssetIcon(Name) then
+                TableInsert(Names, tostring(Name))
+            end
+        end
+
+        local Success, Ready = pcall(Registry.PreloadAsync, Names, Provider or self.IconProvider)
+
+        return Success and Ready or 0
+    end
 
     -- Folders
     for Index, Value in Library.Folders do 
@@ -461,12 +654,36 @@ local Library do
             return Dragging
         end
 
-        Instances.MakeResizeable = function(self, Minimum, Maximum, Window)
+        Instances.MakeResizeable = function(self, Minimum, Maximum, OnResize, DefaultSize)
             if not self.Instance then 
                 return
             end
 
             local Gui = self.Instance
+
+            local GetScale = function()
+                local UIScale = Gui:FindFirstChildOfClass("UIScale")
+
+                if UIScale and UIScale.Scale > 0 then
+                    return UIScale.Scale
+                end
+
+                return 1
+            end
+
+            local GetSize = function()
+                if Gui.Size.X.Offset > 0 and Gui.Size.Y.Offset > 0 then
+                    return Vector2New(Gui.Size.X.Offset, Gui.Size.Y.Offset)
+                end
+
+                local Scale = GetScale()
+
+                return Vector2New(Gui.AbsoluteSize.X / Scale, Gui.AbsoluteSize.Y / Scale)
+            end
+
+            Minimum = Minimum or Vector2New(320, 240)
+            Maximum = Maximum or Vector2New(9999, 9999)
+            DefaultSize = DefaultSize or GetSize()
 
             local Resizing = false 
             local CurrentSide = nil
@@ -474,10 +691,22 @@ local Library do
             local StartMouse = nil 
             local StartPosition = nil 
             local StartSize = nil
-            
-            local EdgeThickness = 2
 
-            local MakeEdge = function(Name, Position, Size)
+            local EdgeThickness = 4
+
+            local Resizer = {
+                Minimum = Minimum,
+                Maximum = Maximum,
+                DefaultSize = Vector2New(DefaultSize.X, DefaultSize.Y),
+                PreferredSize = Vector2New(DefaultSize.X, DefaultSize.Y),
+                LastSize = Vector2New(DefaultSize.X, DefaultSize.Y),
+                Grip = nil,
+            }
+
+            local Edges = { }
+            local GripLines = { }
+
+            local MakeEdge = function(Position, Size, Side)
                 local Button = Instances:Create("TextButton", {
                     Name = "\0",
                     Size = Size,
@@ -491,37 +720,58 @@ local Library do
                     ZIndex = 99999,
                 })  Button:AddToTheme({BackgroundColor3 = "Accent"})
 
-                return Button
+                TableInsert(Edges, { Button = Button, Side = Side })
             end
 
-            local Edges = {
-                {Button = MakeEdge(
-                    "Left", 
-                    UDim2New(0, 0, 0, 0), 
-                    UDim2New(0, EdgeThickness, 1, 0)), 
-                    Side = "L"
-                },
+            MakeEdge(UDim2New(0, 0, 0, 0), UDim2New(0, EdgeThickness, 1, 0), "L")
+            MakeEdge(UDim2New(1, -EdgeThickness, 0, 0), UDim2New(0, EdgeThickness, 1, 0), "R")
+            MakeEdge(UDim2New(0, 0, 0, 0), UDim2New(1, 0, 0, EdgeThickness), "T")
+            MakeEdge(UDim2New(0, 0, 1, -EdgeThickness), UDim2New(1, 0, 0, EdgeThickness), "B")
 
-                {Button = MakeEdge(
-                    "Right", 
-                    UDim2New(1, -EdgeThickness, 0, 0), 
-                    UDim2New(0, EdgeThickness, 1, 0)), 
-                    Side = "R"
-                },
+            -- Corner grip
+            local Grip = Instances:Create("TextButton", {
+                Parent = Gui,
+                Name = "\0",
+                AnchorPoint = Vector2New(1, 1),
+                Position = UDim2New(1, 0, 1, 0),
+                Size = UDim2New(0, 24, 0, 24),
+                BackgroundTransparency = 1,
+                Text = "",
+                AutoButtonColor = false,
+                BorderSizePixel = 0,
+                ZIndex = 100000,
+            })
 
-                {Button = MakeEdge(
-                    "Top", UDim2New(0, 0, 0, 0), 
-                    UDim2New(1, 0, 0, EdgeThickness)), 
-                    Side = "T"
-                },
+            Resizer.Grip = Grip
 
-                {Button = MakeEdge(
-                    "Bottom", 
-                    UDim2New(0, 0, 1, -EdgeThickness), 
-                    UDim2New(1, 0, 0, EdgeThickness)), 
-                    Side = "B"
-                },
-            }
+            for Index = 1, 3 do
+                local Line = Instances:Create("Frame", {
+                    Parent = Grip.Instance,
+                    Name = "\0",
+                    AnchorPoint = Vector2New(0.5, 0.5),
+                    Position = UDim2New(1, -6 - (Index - 1) * 5, 1, -6 - (Index - 1) * 5),
+                    Size = UDim2New(0, 4 + Index * 3, 0, 1),
+                    BorderSizePixel = 0,
+                    BackgroundColor3 = FromRGB(240, 240, 240),
+                    BackgroundTransparency = 0.5,
+                    Rotation = 45,
+                    ZIndex = 100000,
+                })
+
+                TableInsert(GripLines, Line)
+            end
+
+            Grip:OnHover(function()
+                for Index, Line in GripLines do
+                    Line:Tween(nil, {BackgroundColor3 = Library.Theme.Accent, BackgroundTransparency = 0})
+                end
+            end)
+
+            Grip:OnHoverLeave(function()
+                for Index, Line in GripLines do
+                    Line:Tween(nil, {BackgroundColor3 = Library.Theme.Text, BackgroundTransparency = 0.5})
+                end
+            end)
 
             local BeginResizing = function(Side)
                 Resizing = true 
@@ -529,37 +779,59 @@ local Library do
 
                 StartMouse = UserInputService:GetMouseLocation()
 
-                -- store offsets, not absolute screen pos
                 StartPosition = Vector2New(Gui.Position.X.Offset, Gui.Position.Y.Offset)
-                StartSize = Vector2New(Gui.Size.X.Offset, Gui.Size.Y.Offset)
-                
-                for Index, Value in Edges do 
-                    Value.Button:Tween(nil, {BackgroundTransparency = (Value.Side == Side) and 0 or 1})
-                end
+                StartSize = GetSize()
             end
 
             local EndResizing = function()
+                if not Resizing then
+                    return
+                end
+
                 Resizing = false 
                 CurrentSide = nil
 
-                for Index, Value in Edges do 
-                    Value.Button.Instance.BackgroundTransparency = 1
+                local Size = GetSize()
+
+                Resizer.LastSize = Size
+                Resizer.PreferredSize = Size
+
+                if type(OnResize) == "function" then
+                    pcall(OnResize, Vector2New(Gui.AbsoluteSize.X, Gui.AbsoluteSize.Y))
                 end
             end
 
+            local LastGripPress = 0
+
+            Grip:Connect("InputBegan", function(Input)
+                if Input.UserInputType ~= Enum.UserInputType.MouseButton1 and Input.UserInputType ~= Enum.UserInputType.Touch then
+                    return
+                end
+
+                local Now = os.clock()
+
+                -- Double click the grip to restore the default size
+                if Now - LastGripPress <= 0.35 then
+                    LastGripPress = 0
+                    Resizer:SetSize(DefaultSize.X, DefaultSize.Y)
+                    return
+                end
+
+                LastGripPress = Now
+                BeginResizing("BR")
+            end)
+
             for Index, Value in Edges do 
                 Value.Button:Connect("InputBegan", function(Input)
-                    if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+                    if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
                         BeginResizing(Value.Side)
                     end
                 end)
             end
 
             Library:Connect(UserInputService.InputEnded, function(Input)
-                if Input.UserInputType == Enum.UserInputType.MouseButton1 then
-                    if Resizing then
-                        EndResizing()
-                    end
+                if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+                    EndResizing()
                 end
             end)
 
@@ -568,57 +840,77 @@ local Library do
                     return 
                 end
 
+                local Scale = GetScale()
                 local MouseLocation = UserInputService:GetMouseLocation()
-                local dx = MouseLocation.X - StartMouse.X
-                local dy = MouseLocation.Y - StartMouse.Y
-            
+                local dx = (MouseLocation.X - StartMouse.X) / Scale
+                local dy = (MouseLocation.Y - StartMouse.Y) / Scale
+
+                local Anchor = Gui.AnchorPoint
+
                 local x, y = StartPosition.X, StartPosition.Y
                 local w, h = StartSize.X, StartSize.Y
 
-                if CurrentSide == "L" then
-                    x = StartPosition.X + dx
-                    w = StartSize.X - dx
-
-                    if Window then
-                        Window.Left.Y = h
-                    end
-                elseif CurrentSide == "R" then
-                    w = StartSize.X + dx
-
-                    if Window then
-                        Window.Right.Y = h
-                    end
-                elseif CurrentSide == "T" then
-                    y = StartPosition.Y + dy
-                    h = StartSize.Y - dy
-
-                    if Window then
-                        Window.Top.X = w
-                    end
-                elseif CurrentSide == "B" then
-                    h = StartSize.Y + dy
-
-                    if Window then
-                        Window.Bottom.X = w
-                    end
+                if StringFind(CurrentSide, "L") then
+                    w = MathClamp(StartSize.X - dx, Minimum.X, Maximum.X)
+                    x = StartPosition.X - (1 - Anchor.X) * (w - StartSize.X)
+                elseif StringFind(CurrentSide, "R") then
+                    w = MathClamp(StartSize.X + dx, Minimum.X, Maximum.X)
+                    x = StartPosition.X + Anchor.X * (w - StartSize.X)
                 end
-            
-                if w < Minimum.X then
-                    if CurrentSide == "L" then
-                        x = x - (Minimum.X - w)
-                    end
-                    w = Minimum.X
+
+                if StringFind(CurrentSide, "T") then
+                    h = MathClamp(StartSize.Y - dy, Minimum.Y, Maximum.Y)
+                    y = StartPosition.Y - (1 - Anchor.Y) * (h - StartSize.Y)
+                elseif StringFind(CurrentSide, "B") then
+                    h = MathClamp(StartSize.Y + dy, Minimum.Y, Maximum.Y)
+                    y = StartPosition.Y + Anchor.Y * (h - StartSize.Y)
                 end
-                if h < Minimum.Y then
-                    if CurrentSide == "T" then
-                        y = y - (Minimum.Y - h)
-                    end
-                    h = Minimum.Y
-                end
-            
-                self:Tween(TweenInfo.new(0.35, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Position = UDim2FromOffset(x, y)})
-                self:Tween(TweenInfo.new(0.35, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2FromOffset(w, h)})
+
+                Gui.Position = UDim2FromOffset(x, y)
+                Gui.Size = UDim2FromOffset(w, h)
+
+                Resizer.LastSize = Vector2New(w, h)
             end)
+
+            function Resizer:SetSize(Width, Height, Tweened, KeepPreferred)
+                Width = MathClamp(Width, self.Minimum.X, self.Maximum.X)
+                Height = MathClamp(Height, self.Minimum.Y, self.Maximum.Y)
+
+                local Target = UDim2FromOffset(Width, Height)
+
+                if Tweened == false then
+                    Gui.Size = Target
+                else
+                    Tween:Create(Gui, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = Target}, true)
+                end
+
+                self.LastSize = Vector2New(Width, Height)
+
+                if not KeepPreferred then
+                    self.PreferredSize = Vector2New(Width, Height)
+                end
+            end
+
+            function Resizer:SetBounds(NewMinimum, NewMaximum)
+                self.Minimum = NewMinimum or self.Minimum
+                self.Maximum = NewMaximum or self.Maximum
+            end
+
+            function Resizer:ResetSize()
+                self:SetSize(self.DefaultSize.X, self.DefaultSize.Y)
+            end
+
+            function Resizer:SetResizable(Bool)
+                for Index, Value in Edges do
+                    Value.Button.Instance.Visible = Bool
+                end
+
+                Grip.Instance.Visible = Bool
+            end
+
+            self.Resizer = Resizer
+
+            return Resizer
         end
 
         Instances.OnHover = function(self, Function)
@@ -893,6 +1185,82 @@ local Library do
         end
     end
 
+    Library.SetClipboard = function(self, Text)
+        local Copy = setclipboard or toclipboard or (Clipboard and Clipboard.set)
+
+        if not Copy then
+            return false
+        end
+
+        return pcall(Copy, tostring(Text))
+    end
+
+    Library.GetClipboard = function(self)
+        local Paste = getclipboard or (Clipboard and Clipboard.get)
+
+        if not Paste then
+            return nil
+        end
+
+        local Success, Text = pcall(Paste)
+
+        return Success and Text or nil
+    end
+
+    Library.GetAutoLoadConfig = function(self)
+        local Path = self.Folders.Directory .. "/AutoLoad.txt"
+
+        if isfile(Path) then
+            local Name = readfile(Path)
+
+            if Name and Name ~= "" then
+                return Name
+            end
+        end
+
+        return nil
+    end
+
+    Library.SetAutoLoadConfig = function(self, Name)
+        if not Name or Name == "" then
+            return false
+        end
+
+        if not isfolder(self.Folders.Directory) then
+            makefolder(self.Folders.Directory)
+        end
+
+        writefile(self.Folders.Directory .. "/AutoLoad.txt", Name)
+
+        return true
+    end
+
+    Library.ClearAutoLoadConfig = function(self)
+        local Path = self.Folders.Directory .. "/AutoLoad.txt"
+
+        if isfile(Path) then
+            delfile(Path)
+        end
+    end
+
+    Library.LoadAutoLoadConfig = function(self)
+        local Name = self:GetAutoLoadConfig()
+
+        if not Name then
+            return false
+        end
+
+        local Path = self.Folders.Configs .. "/" .. Name
+
+        if not isfile(Path) then
+            return false
+        end
+
+        return self:SafeCall(function()
+            self:LoadConfig(readfile(Path))
+        end)
+    end
+
     Library.RefreshConfigsList = function(self, Element)
         if not Element or not Element.Refresh then 
             return 
@@ -908,6 +1276,8 @@ local Library do
                 end
             end
         end
+
+        table.sort(List)
 
         Element:Refresh(List)
     end
@@ -2187,7 +2557,7 @@ local Library do
                     ImageColor3 = FromRGB(255, 255, 255),
                     BorderColor3 = FromRGB(0, 0, 0),
                     AnchorPoint = Vector2New(1, 0),
-                    Image = "rbxassetid://"..Data.Icon,
+                    Image = "",
                     BackgroundTransparency = 1,
                     Position = UDim2New(1, 0, 0, 0),
                     Size = UDim2New(0, 16, 0, 16),
@@ -2213,6 +2583,8 @@ local Library do
                     })         
                 end   
             end
+
+            Library:ApplyIconAsync(Items["Icon"], Data.Icon)
 
             local Size = Items["Notification"].Instance.AbsoluteSize
             Items["Notification"].Instance.Size = UDim2New(0, 0, 0, 0)
@@ -2299,7 +2671,8 @@ local Library do
                     })                    
                 end
 
-                Items["MainFrame"]:MakeResizeable(Vector2New(Items["MainFrame"].Instance.AbsoluteSize.X, Items["MainFrame"].Instance.AbsoluteSize.Y), Vector2New(9999, 9999), OriginalSizes)
+                Window.Resizer = Items["MainFrame"]:MakeResizeable(Vector2New(480, 360), Vector2New(9999, 9999), nil, Vector2New(677, 644))
+                Window.AutoResize = not (Data.AutoResize == false or Data.autoresize == false)
                 Library:MakeBlurred(Items["MainFrame"], Window)
                 
                 Items["LeftTabs"] = Instances:Create("Frame", {
@@ -3225,6 +3598,72 @@ local Library do
                 Items["MainFrame"].Instance.Position = UDim2New(0, CenterPosition.X, 0, CenterPosition.Y)
             end
 
+            function Window:SetSize(Width, Height)
+                local Resizer = Items["MainFrame"].Resizer
+
+                if Resizer then
+                    Resizer:SetSize(Width, Height)
+                end
+            end
+
+            function Window:GetSize()
+                local Resizer = Items["MainFrame"].Resizer
+
+                if Resizer then
+                    return Resizer.LastSize
+                end
+
+                return Items["MainFrame"].Instance.AbsoluteSize
+            end
+
+            function Window:FitToViewport()
+                local Resizer = Items["MainFrame"].Resizer
+
+                if not Resizer then
+                    return
+                end
+
+                local CurrentCamera = Workspace.CurrentCamera or Camera
+
+                if not CurrentCamera then
+                    return
+                end
+
+                local Viewport = CurrentCamera.ViewportSize
+                local Scale = 1
+                local UIScale = Items["MainFrame"].Instance:FindFirstChildOfClass("UIScale")
+
+                if UIScale and UIScale.Scale > 0 then
+                    Scale = UIScale.Scale
+                end
+
+                local Margin = 16
+                local Available = Vector2New((Viewport.X - Margin * 2) / Scale, (Viewport.Y - Margin * 2) / Scale)
+                local Preferred = Resizer.PreferredSize or Resizer.DefaultSize
+
+                local Width = MathClamp(math.min(Preferred.X, Available.X), Resizer.Minimum.X, Resizer.Maximum.X)
+                local Height = MathClamp(math.min(Preferred.Y, Available.Y), Resizer.Minimum.Y, Resizer.Maximum.Y)
+
+                Resizer:SetSize(Width, Height, false, true)
+
+                local Frame = Items["MainFrame"].Instance
+                local Size = Frame.AbsoluteSize
+                local Position = Frame.AbsolutePosition
+                local X = MathClamp(Position.X, 0, math.max(0, Viewport.X - Size.X))
+                local Y = MathClamp(Position.Y, 0, math.max(0, Viewport.Y - Size.Y))
+
+                Frame.AnchorPoint = Vector2New(0, 0)
+                Frame.Position = UDim2New(0, X, 0, Y)
+            end
+
+            function Window:SetAutoResize(Bool)
+                Window.AutoResize = Bool ~= false
+
+                if Window.AutoResize then
+                    Window:FitToViewport()
+                end
+            end
+
             function Window:SetOpen(Bool)
                 if Debounce then 
                     return
@@ -3408,7 +3847,7 @@ local Library do
             function Window:Init()
                 for __, Value in Window.Pages do 
                     if Value.Active then 
-                        for _, Value2 in Value.Sections do 
+                        for _, Value2 in Value:GetAllSections() do
                             task.spawn(function()
                                 Value2:TweenElements(true)
                                 Library:RefreshConfigsList(ConfigsDropdown)
@@ -3426,6 +3865,21 @@ local Library do
 
             Window:SetCenter()
             task.wait()
+
+            if Window.AutoResize then
+                Window:FitToViewport()
+            end
+
+            local CurrentCamera = Workspace.CurrentCamera or Camera
+
+            if CurrentCamera then
+                Library:Connect(CurrentCamera:GetPropertyChangedSignal("ViewportSize"), function()
+                    if Window.AutoResize then
+                        Window:FitToViewport()
+                    end
+                end)
+            end
+
             Window:SetOpen(true)
             return setmetatable(Window, Library)
         end
@@ -3639,6 +4093,8 @@ local Library do
                 Items = { },
                 ColumnsData = { },
                 Sections = { },
+                SubTabs = { },
+                ActiveSubTab = nil,
                 Active = false
             }
 
@@ -3658,19 +4114,19 @@ local Library do
                     TextSize = 14,
                     BackgroundColor3 = FromRGB(124, 163, 255)
                 })  Items["Inactive"]:AddToTheme({BackgroundColor3 = "Accent"})
-                
+
                 Instances:Create("UICorner", {
                     Parent = Items["Inactive"].Instance,
                     Name = "\0",
                     CornerRadius = UDimNew(0, 5)
                 })
-                
+
                 Items.Gradient = Instances:Create("UIGradient", {
                     Parent = Items["Inactive"].Instance,
                     Name = "\0",
                     Transparency = NumSequence{NumSequenceKeypoint(0, 0.41874998807907104), NumSequenceKeypoint(0.445, 0.78125), NumSequenceKeypoint(0.751, 0.9375), NumSequenceKeypoint(1, 1)}
                 })
-                
+
                 Items["Icon"] = Instances:Create("ImageLabel", {
                     Parent = Items["Inactive"].Instance,
                     Name = "\0",
@@ -3678,7 +4134,7 @@ local Library do
                     BorderColor3 = FromRGB(0, 0, 0),
                     Size = UDim2New(0, 18, 0, 18),
                     AnchorPoint = Vector2New(0, 0.5),
-                    Image = "rbxassetid://"..Page.Icon,
+                    Image = "rbxassetid://100050851789190",
                     BackgroundTransparency = 1,
                     Position = UDim2New(0, 16, 0.5, 0),
                     ZIndex = 2,
@@ -3693,7 +4149,7 @@ local Library do
                 }):AddToTheme({Color = function()
                     return RGBSequence{RGBSequenceKeypoint(0, Library.Theme.Accent), RGBSequenceKeypoint(1, Library.Theme.AccentGradient)}
                 end})
-                
+
                 Items["Text"] = Instances:Create("TextLabel", {
                     Parent = Items["Inactive"].Instance,
                     Name = "\0",
@@ -3710,8 +4166,8 @@ local Library do
                     ZIndex = 2,
                     TextSize = 14,
                     BackgroundColor3 = FromRGB(255, 255, 255)
-                })  Items["Text"]:AddToTheme({TextColor3 = "Text"})      
-                
+                })  Items["Text"]:AddToTheme({TextColor3 = "Text"})
+
                 Items["Page"] = Instances:Create("Frame", {
                     Parent = Library.UnusedHolder.Instance,
                     Name = "\0",
@@ -3724,9 +4180,40 @@ local Library do
                     BorderSizePixel = 0,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
-                
-                Instances:Create("UIListLayout", {
+
+                Items["SubTabBar"] = Instances:Create("Frame", {
                     Parent = Items["Page"].Instance,
+                    Name = "\0",
+                    BackgroundTransparency = 1,
+                    Position = UDim2New(0, 10, 0, 10),
+                    Size = UDim2New(1, -20, 0, 30),
+                    Visible = false,
+                    ZIndex = 4,
+                    BorderSizePixel = 0,
+                    BackgroundColor3 = FromRGB(255, 255, 255)
+                })
+
+                Instances:Create("UIListLayout", {
+                    Parent = Items["SubTabBar"].Instance,
+                    Name = "\0",
+                    FillDirection = Enum.FillDirection.Horizontal,
+                    Padding = UDimNew(0, 6),
+                    SortOrder = Enum.SortOrder.LayoutOrder,
+                    VerticalAlignment = Enum.VerticalAlignment.Center
+                })
+
+                Items["Body"] = Instances:Create("Frame", {
+                    Parent = Items["Page"].Instance,
+                    Name = "\0",
+                    BackgroundTransparency = 1,
+                    Size = UDim2New(1, 0, 1, 0),
+                    ZIndex = 2,
+                    BorderSizePixel = 0,
+                    BackgroundColor3 = FromRGB(255, 255, 255)
+                })
+
+                Instances:Create("UIListLayout", {
+                    Parent = Items["Body"].Instance,
                     Name = "\0",
                     FillDirection = Enum.FillDirection.Horizontal,
                     HorizontalFlex = Enum.UIFlexAlignment.Fill,
@@ -3734,19 +4221,19 @@ local Library do
                     SortOrder = Enum.SortOrder.LayoutOrder,
                     VerticalFlex = Enum.UIFlexAlignment.Fill
                 })
-                
+
                 Instances:Create("UIPadding", {
-                    Parent = Items["Page"].Instance,
+                    Parent = Items["Body"].Instance,
                     Name = "\0",
                     PaddingTop = UDimNew(0, 10),
                     PaddingBottom = UDimNew(0, 10),
                     PaddingRight = UDimNew(0, 10),
                     PaddingLeft = UDimNew(0, 10)
-                })                
+                })
 
-                for Index = 1, Page.Columns do 
+                for Index = 1, Page.Columns do
                     local NewColumn = Instances:Create("ScrollingFrame", {
-                        Parent = Items["Page"].Instance,
+                        Parent = Items["Body"].Instance,
                         Name = "\0",
                         ScrollBarImageColor3 = FromRGB(0, 0, 0),
                         Active = true,
@@ -3760,7 +4247,7 @@ local Library do
                         BorderSizePixel = 0,
                         CanvasSize = UDim2New(0, 0, 0, 0)
                     })
-                    
+
                     Instances:Create("UIListLayout", {
                         Parent = NewColumn.Instance,
                         Name = "\0",
@@ -3772,6 +4259,225 @@ local Library do
                 end
 
                 Page.Items = Items
+            end
+
+            Library:ApplyIconAsync(Items["Icon"], Page.Icon)
+
+            function Page:SetIcon(Icon)
+                Page.Icon = Icon
+                Library:ApplyIconAsync(Items["Icon"], Icon)
+            end
+
+            function Page:GetAllSections()
+                local All = { }
+
+                for Index, Value in Page.Sections do
+                    TableInsert(All, Value)
+                end
+
+                for Index, SubTab in Page.SubTabs do
+                    for SectionIndex, Value in SubTab.Sections do
+                        TableInsert(All, Value)
+                    end
+                end
+
+                return All
+            end
+
+            function Page:SelectSubTab(SubTab)
+                Page.ActiveSubTab = SubTab
+
+                local HasSubTabs = #Page.SubTabs > 0
+
+                Items["Body"].Instance.Visible = not HasSubTabs or not SubTab
+
+                for Index, Value in Page.SubTabs do
+                    local Active = Value == SubTab
+
+                    Value.Active = Active
+                    Value.Items["Content"].Instance.Visible = Active
+
+                    if Value.UpdateButton then
+                        Value:UpdateButton(Active)
+                    end
+                end
+
+                if SubTab and Page.Active then
+                    for Index, Value in SubTab.Sections do
+                        task.spawn(function()
+                            Value:TweenElements(true)
+                        end)
+                    end
+                end
+            end
+
+            function Page:SubTab(Data)
+                Data = Data or { }
+
+                local SubTab = {
+                    Window = Page.Window,
+                    Page = Page,
+
+                    Name = Data.Name or Data.name or "SubTab",
+                    Icon = Data.Icon or Data.icon or nil,
+                    Columns = Data.Columns or Data.columns or Page.Columns,
+
+                    Items = { },
+                    ColumnsData = { },
+                    Sections = { },
+                    Active = false
+                }
+
+                if #Page.SubTabs == 0 then
+                    Items["SubTabBar"].Instance.Visible = true
+                    Items["Body"].Instance.Position = UDim2New(0, 0, 0, 44)
+                    Items["Body"].Instance.Size = UDim2New(1, 0, 1, -44)
+                end
+
+                local Button = Instances:Create("TextButton", {
+                    Parent = Items["SubTabBar"].Instance,
+                    Name = "\0",
+                    FontFace = Library.Font,
+                    TextColor3 = FromRGB(240, 240, 240),
+                    TextTransparency = 0.3,
+                    Text = SubTab.Name,
+                    AutoButtonColor = false,
+                    BackgroundTransparency = 1,
+                    BackgroundColor3 = FromRGB(27, 26, 29),
+                    Size = UDim2New(0, 0, 0, 28),
+                    AutomaticSize = Enum.AutomaticSize.X,
+                    BorderSizePixel = 0,
+                    ZIndex = 4,
+                    TextSize = 13,
+                    LayoutOrder = #Page.SubTabs + 1
+                })  Button:AddToTheme({TextColor3 = "Text"})
+
+                Instances:Create("UICorner", {
+                    Parent = Button.Instance,
+                    Name = "\0",
+                    CornerRadius = UDimNew(0, 4)
+                })
+
+                local Padding = Instances:Create("UIPadding", {
+                    Parent = Button.Instance,
+                    Name = "\0",
+                    PaddingLeft = UDimNew(0, SubTab.Icon and 32 or 12),
+                    PaddingRight = UDimNew(0, 12)
+                })
+
+                SubTab.Items["Icon"] = Instances:Create("ImageLabel", {
+                    Parent = Button.Instance,
+                    Name = "\0",
+                    BackgroundTransparency = 1,
+                    ImageColor3 = FromRGB(240, 240, 240),
+                    ImageTransparency = 0.3,
+                    Size = UDim2New(0, 16, 0, 16),
+                    Position = UDim2New(0, 10, 0.5, 0),
+                    AnchorPoint = Vector2New(0, 0.5),
+                    Visible = SubTab.Icon ~= nil,
+                    BorderSizePixel = 0,
+                    ZIndex = 5,
+                    BackgroundColor3 = FromRGB(255, 255, 255)
+                })
+
+                SubTab.Items["Button"] = Button
+
+                local Content = Instances:Create("Frame", {
+                    Parent = Items["Page"].Instance,
+                    Name = "\0",
+                    Visible = false,
+                    BackgroundTransparency = 1,
+                    Position = UDim2New(0, 0, 0, 44),
+                    Size = UDim2New(1, 0, 1, -44),
+                    ZIndex = 3,
+                    BorderSizePixel = 0,
+                    BackgroundColor3 = FromRGB(255, 255, 255)
+                })
+
+                SubTab.Items["Content"] = Content
+
+                Instances:Create("UIListLayout", {
+                    Parent = Content.Instance,
+                    Name = "\0",
+                    FillDirection = Enum.FillDirection.Horizontal,
+                    HorizontalFlex = Enum.UIFlexAlignment.Fill,
+                    Padding = UDimNew(0, 10),
+                    SortOrder = Enum.SortOrder.LayoutOrder,
+                    VerticalFlex = Enum.UIFlexAlignment.Fill
+                })
+
+                Instances:Create("UIPadding", {
+                    Parent = Content.Instance,
+                    Name = "\0",
+                    PaddingTop = UDimNew(0, 10),
+                    PaddingBottom = UDimNew(0, 10),
+                    PaddingRight = UDimNew(0, 10),
+                    PaddingLeft = UDimNew(0, 10)
+                })
+
+                for Index = 1, SubTab.Columns do
+                    local NewColumn = Instances:Create("ScrollingFrame", {
+                        Parent = Content.Instance,
+                        Name = "\0",
+                        ScrollBarImageColor3 = FromRGB(0, 0, 0),
+                        Active = true,
+                        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+                        ScrollBarThickness = 0,
+                        BorderColor3 = FromRGB(0, 0, 0),
+                        BackgroundTransparency = 1,
+                        Size = UDim2New(0, 100, 0, 100),
+                        BackgroundColor3 = FromRGB(255, 255, 255),
+                        ZIndex = 3,
+                        BorderSizePixel = 0,
+                        CanvasSize = UDim2New(0, 0, 0, 0)
+                    })
+
+                    Instances:Create("UIListLayout", {
+                        Parent = NewColumn.Instance,
+                        Name = "\0",
+                        Padding = UDimNew(0, 5),
+                        SortOrder = Enum.SortOrder.LayoutOrder
+                    })
+
+                    SubTab.ColumnsData[Index] = NewColumn
+                end
+
+                function SubTab:Section(SectionData)
+                    return Library.Pages.Section(SubTab, SectionData)
+                end
+
+                function SubTab:SetIcon(Icon)
+                    SubTab.Icon = Icon
+                    Padding.Instance.PaddingLeft = UDimNew(0, Icon and 32 or 12)
+                    SubTab.Items["Icon"].Instance.Visible = Icon ~= nil
+                    Library:ApplyIconAsync(SubTab.Items["Icon"], Icon)
+                end
+
+                function SubTab:UpdateButton(Active)
+                    if Active then
+                        Button:Tween(nil, {BackgroundTransparency = 0, BackgroundColor3 = Library.Theme.Accent})
+                        Button:Tween(nil, {TextColor3 = FromRGB(0, 0, 0), TextTransparency = 0})
+                    else
+                        Button:Tween(nil, {BackgroundTransparency = 1, BackgroundColor3 = Library.Theme.Element})
+                        Button:Tween(nil, {TextColor3 = Library.Theme.Text, TextTransparency = 0.3})
+                    end
+
+                    SubTab.Items["Icon"]:Tween(nil, {ImageColor3 = Active and FromRGB(0, 0, 0) or Library.Theme.Text, ImageTransparency = Active and 0 or 0.3})
+                end
+
+                Button:Connect("MouseButton1Down", function()
+                    Page:SelectSubTab(SubTab)
+                end)
+
+                Library:ApplyIconAsync(SubTab.Items["Icon"], SubTab.Icon)
+
+                TableInsert(Page.SubTabs, SubTab)
+
+                if #Page.SubTabs == 1 then
+                    Page:SelectSubTab(SubTab)
+                end
+
+                return setmetatable(SubTab, Library.Pages)
             end
 
             local Debounce = false
@@ -3791,7 +4497,7 @@ local Library do
                     Items["Inactive"]:Tween(nil, {BackgroundTransparency = 0.25})
                     Items["Page"]:Tween(TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Position = UDim2New(0, 0, 0, 0)})
 
-                    for Index, Value in Page.Sections do 
+                    for Index, Value in Page:GetAllSections() do
                         task.spawn(function()
                             Value:TweenElements(true)
                         end)
@@ -3826,7 +4532,7 @@ local Library do
                     Debounce = false
 
                     if not Page.Active then 
-                        for Index, Value in Page.Sections do 
+                        for Index, Value in Page:GetAllSections() do
                             task.spawn(function()
                                 Value:TweenElements(false, true)
                             end)   
@@ -4415,6 +5121,15 @@ local Library do
         Library.Pages.Section = function(self, Data)
             Data = Data or { }
 
+            -- Sections created on a page that uses sub tabs go to the active sub tab
+            if self.SubTabs and #self.SubTabs > 0 then
+                local SubTab = self.ActiveSubTab or self.SubTabs[1]
+
+                if SubTab then
+                    return SubTab:Section(Data)
+                end
+            end
+
             local Section = {
                 Window = self.Window,
                 Page = self,
@@ -4474,7 +5189,7 @@ local Library do
                     BorderColor3 = FromRGB(0, 0, 0),
                     Size = UDim2New(0, 21, 0, 20),
                     AnchorPoint = Vector2New(0, 0.5),
-                    Image = "rbxassetid://"..Section.Icon,
+                    Image = "rbxassetid://123944728972740",
                     BackgroundTransparency = 1,
                     Position = UDim2New(0, 15, 0.5, 0),
                     ZIndex = 2,
@@ -4761,6 +5476,13 @@ local Library do
                 })
 
                 Section.Items = Items
+            end
+
+            Library:ApplyIconAsync(Items["Icon"], Section.Icon)
+
+            function Section:SetIcon(Icon)
+                Section.Icon = Icon
+                Library:ApplyIconAsync(Items["Icon"], Icon)
             end
 
             function Section:ToggleBackground()
@@ -5413,13 +6135,15 @@ local Library do
                         BorderColor3 = FromRGB(0, 0, 0),
                         Size = UDim2New(0, 18, 0, 18),
                         AnchorPoint = Vector2New(1, 0.5),
-                        Image = "rbxassetid://"..Button.Icon,
+                        Image = "",
                         BackgroundTransparency = 1,
                         Position = UDim2New(0, -8, 0.5, 0),
                         ZIndex = 2,
                         BorderSizePixel = 0,
                         BackgroundColor3 = FromRGB(255, 255, 255)
                     })  Items["Icon"]:AddToTheme({ImageColor3 = "Text"})
+
+                    Library:ApplyIconAsync(Items["Icon"], Button.Icon)
                 end                    
 
                 Items["Button"]:OnHover(function()
@@ -5631,8 +6355,110 @@ local Library do
                     BorderColor3 = FromRGB(0, 0, 0),
                     ZIndex = 2,
                     TextSize = 14,
+                    Active = true,
+                    Selectable = false,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })  Items["Value"]:AddToTheme({TextColor3 = "Text"})
+
+                local ValueEditor
+                local LastValueClick = 0
+
+                local CloseValueEditor = function(Commit)
+                    if not ValueEditor then
+                        return
+                    end
+
+                    local Editor = ValueEditor
+                    local Text = Editor.Instance.Text
+
+                    ValueEditor = nil
+
+                    Items["Value"].Instance.Visible = true
+                    Editor.Instance.Visible = false
+                    Editor:Clean()
+
+                    if not Commit then
+                        return
+                    end
+
+                    local Number = tonumber(Text)
+
+                    if not Number then
+                        Number = tonumber(StringGSub(Text, "[^%d%-%.%+]", ""))
+                    end
+
+                    if Number then
+                        Slider:Set(Number)
+                    end
+                end
+
+                function Slider:Edit()
+                    if ValueEditor then
+                        return
+                    end
+
+                    Items["Value"].Instance.Visible = false
+
+                    ValueEditor = Instances:Create("TextBox", {
+                        Parent = Items["Slider"].Instance,
+                        Name = "\0",
+                        FontFace = Library.Font,
+                        TextColor3 = FromRGB(240, 240, 240),
+                        Text = tostring(Slider.Value),
+                        PlaceholderText = tostring(Slider.Value),
+                        ClearTextOnFocus = false,
+                        TextEditable = true,
+                        BackgroundColor3 = FromRGB(27, 26, 29),
+                        BorderSizePixel = 0,
+                        AnchorPoint = Vector2New(1, 0),
+                        Position = UDim2New(1, 0, 0, -2),
+                        Size = UDim2New(0, 70, 0, 19),
+                        ZIndex = 3,
+                        TextSize = 14,
+                        TextXAlignment = Enum.TextXAlignment.Right,
+                    })  ValueEditor:AddToTheme({TextColor3 = "Text", BackgroundColor3 = "Element"})
+
+                    Instances:Create("UICorner", {
+                        Parent = ValueEditor.Instance,
+                        Name = "\0",
+                        CornerRadius = UDimNew(0, 3)
+                    })
+
+                    Instances:Create("UIPadding", {
+                        Parent = ValueEditor.Instance,
+                        Name = "\0",
+                        PaddingLeft = UDimNew(0, 4),
+                        PaddingRight = UDimNew(0, 4)
+                    })
+
+                    ValueEditor.Instance:CaptureFocus()
+                    ValueEditor.Instance.CursorPosition = -1
+
+                    ValueEditor:Connect("FocusLost", function()
+                        CloseValueEditor(true)
+                    end)
+
+                    ValueEditor:Connect("ReturnPressedFromOnScreenKeyboard", function()
+                        CloseValueEditor(true)
+                    end)
+                end
+
+                -- Double click / double tap the value to type an exact value
+                Items["Value"]:Connect("InputBegan", function(Input)
+                    if Input.UserInputType ~= Enum.UserInputType.MouseButton1 and Input.UserInputType ~= Enum.UserInputType.Touch then
+                        return
+                    end
+
+                    local Now = os.clock()
+
+                    if Now - LastValueClick <= 0.35 then
+                        LastValueClick = 0
+                        Slider:Edit()
+                        return
+                    end
+
+                    LastValueClick = Now
+                end)
 
                 Items["RealSlider"]:OnHover(function()
                     Items["Icon"]:Tween(TweenInfo.new(0.15, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Size = UDim2New(0, 18, 0, 14)})
@@ -7578,55 +8404,198 @@ local Library do
                 end
             })
 
+            local function Notify(Title, Description)
+                Library:Notification({
+                    Title = Title,
+                    Description = Description,
+                    Duration = 4
+                })
+            end
+
+            local function NormalizeName(Name)
+                if not Name or Name == "" then
+                    return nil
+                end
+
+                if Name:sub(-5) ~= ".json" then
+                    Name = Name .. ".json"
+                end
+
+                return Name
+            end
+
+            local function ConfigPath(Name)
+                return Library.Folders.Configs .. "/" .. Name
+            end
+
             ConfigsSection:Button({
                 Name = "Create",
                 Callback = function()
-                    local InputName = Library.Flags["ConfigsName"]
-                    if InputName and InputName ~= "" then
-                        if not isfolder(Library.Folders.Configs) then
-                            makefolder(Library.Folders.Configs)
-                        end
-                        local FinalName = InputName:find(".json") and InputName or InputName .. ".json"
-                        writefile(Library.Folders.Configs .. "/" .. FinalName, Library:GetConfig())
-                        
-                        Library:RefreshConfigsList(ConfigsDropdown)
-                    end
-                end
-            })
+                    local FinalName = NormalizeName(Library.Flags["ConfigsName"])
 
-            ConfigsSection:Button({
-                Name = "Delete",
-                Callback = function()
-                    if ConfigSelected and isfile(Library.Folders.Configs .. "/" .. ConfigSelected) then
-                        delfile(Library.Folders.Configs .. "/" .. ConfigSelected)
-                        Library:RefreshConfigsList(ConfigsDropdown)
-                        ConfigSelected = nil
+                    if not FinalName then
+                        Notify("Config", "Enter a config name first.")
+                        return
                     end
+
+                    if not isfolder(Library.Folders.Configs) then
+                        makefolder(Library.Folders.Configs)
+                    end
+
+                    writefile(ConfigPath(FinalName), Library:GetConfig())
+                    ConfigSelected = FinalName
+
+                    Library:RefreshConfigsList(ConfigsDropdown)
+                    Notify("Config", "Created " .. FinalName)
                 end
             })
 
             ConfigsSection:Button({
                 Name = "Load",
                 Callback = function()
-                    if ConfigSelected and isfile(Library.Folders.Configs .. "/" .. ConfigSelected) then
-                        Library:LoadConfig(readfile(Library.Folders.Configs .. "/" .. ConfigSelected))
+                    if not ConfigSelected then
+                        Notify("Config", "Select a config first.")
+                        return
                     end
+
+                    local Path = ConfigPath(ConfigSelected)
+
+                    if not isfile(Path) then
+                        Notify("Config", "That config no longer exists.")
+                        return
+                    end
+
+                    local Success = Library:SafeCall(function()
+                        Library:LoadConfig(readfile(Path))
+                    end)
+
+                    Notify("Config", Success and ("Loaded " .. ConfigSelected) or "Failed to load config.")
                 end
             })
 
             ConfigsSection:Button({
-                Name = "Save",
+                Name = "Overwrite",
                 Callback = function()
-                    if ConfigSelected and isfile(Library.Folders.Configs .. "/" .. ConfigSelected) then
-                        writefile(Library.Folders.Configs .. "/" .. ConfigSelected, Library:GetConfig())
+                    if not ConfigSelected then
+                        Notify("Config", "Select a config first.")
+                        return
                     end
+
+                    local Path = ConfigPath(ConfigSelected)
+
+                    if not isfile(Path) then
+                        Notify("Config", "That config no longer exists.")
+                        return
+                    end
+
+                    writefile(Path, Library:GetConfig())
+                    Notify("Config", "Overwrote " .. ConfigSelected)
                 end
             })
 
             ConfigsSection:Button({
-                Name = "Refresh",
+                Name = "Delete",
+                Callback = function()
+                    if not ConfigSelected then
+                        Notify("Config", "Select a config first.")
+                        return
+                    end
+
+                    local Path = ConfigPath(ConfigSelected)
+
+                    if isfile(Path) then
+                        delfile(Path)
+                    end
+
+                    if Library:GetAutoLoadConfig() == ConfigSelected then
+                        Library:ClearAutoLoadConfig()
+                    end
+
+                    ConfigSelected = nil
+
+                    Library:RefreshConfigsList(ConfigsDropdown)
+                    Notify("Config", "Deleted config.")
+                end
+            })
+
+            ConfigsSection:Button({
+                Name = "Refresh List",
                 Callback = function()
                     Library:RefreshConfigsList(ConfigsDropdown)
+                end
+            })
+
+            ConfigsSection:Button({
+                Name = "Set Auto Load",
+                Callback = function()
+                    if not ConfigSelected then
+                        Notify("Auto Load", "Select a config first.")
+                        return
+                    end
+
+                    Library:SetAutoLoadConfig(ConfigSelected)
+                    Notify("Auto Load", ConfigSelected .. " will load on start.")
+                end
+            })
+
+            ConfigsSection:Button({
+                Name = "Remove Auto Load",
+                Callback = function()
+                    Library:ClearAutoLoadConfig()
+                    Notify("Auto Load", "Auto load config removed.")
+                end
+            })
+
+            ConfigsSection:Button({
+                Name = "Export to Clipboard",
+                Callback = function()
+                    if not ConfigSelected then
+                        Notify("Export", "Select a config first.")
+                        return
+                    end
+
+                    local Path = ConfigPath(ConfigSelected)
+
+                    if not isfile(Path) then
+                        Notify("Export", "That config no longer exists.")
+                        return
+                    end
+
+                    local Copied = Library:SetClipboard(readfile(Path))
+                    Notify("Export", Copied and ("Copied " .. ConfigSelected .. " to the clipboard.") or "Clipboard is unavailable.")
+                end
+            })
+
+            ConfigsSection:Button({
+                Name = "Import from Clipboard",
+                Callback = function()
+                    local Raw = Library:GetClipboard()
+
+                    if not Raw or Raw == "" then
+                        Notify("Import", "Clipboard is empty or unavailable.")
+                        return
+                    end
+
+                    local Success, Decoded = pcall(HttpService.JSONDecode, HttpService, Raw)
+
+                    if not Success or type(Decoded) ~= "table" then
+                        Notify("Import", "Clipboard does not contain a valid config.")
+                        return
+                    end
+
+                    local FinalName = NormalizeName(Library.Flags["ConfigsName"])
+                        or ConfigSelected
+                        or "Imported.json"
+
+                    if not isfolder(Library.Folders.Configs) then
+                        makefolder(Library.Folders.Configs)
+                    end
+
+                    writefile(ConfigPath(FinalName), Raw)
+                    ConfigSelected = FinalName
+
+                    Library:RefreshConfigsList(ConfigsDropdown)
+                    Notify("Import", "Imported " .. FinalName)
                 end
             })
             
@@ -7658,7 +8627,18 @@ local Library do
                     end
                 end
             })
+
+            UISection:Toggle({
+                Name = "Auto Resize",
+                Flag = "AutoResizeToggle",
+                Default = Window.AutoResize ~= false,
+                Callback = function(Value)
+                    Window:SetAutoResize(Value)
+                end
+            })
         end
+
+        Library:LoadAutoLoadConfig()
 
         return Page
     end

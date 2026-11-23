@@ -13,7 +13,12 @@ A modern, highly customizable, and optimized UI Library for Roblox scripts. Feat
     *   Draggable log container with "Smart Snapping" to the center of the screen.
     *   Auto-sizing logs based on text length.
     *   Stacking animations.
-*   **Nested Elements:** Support for placing Sliders, Dropdowns, and Keybinds *inside* Toggles.
+*   **Nested Elements:** Support for placing Colorpickers and Keybinds *inside* Toggles.
+*   **Sub Tabs:** Pages can contain a sub tab bar, each with its own columns and sections.
+*   **Config Manager:** Create, load, overwrite, delete, refresh, auto-load, and import/export configs through the clipboard.
+*   **Window Resizing:** Drag any edge or the bottom-right corner grip, with an optional Auto Resize mode.
+*   **Molto Icons:** Use icons from Lucide, Tabler, Heroicons, Phosphor, Fluent, Solar and Material for tabs and sections.
+*   **Editable Sliders:** Double-click a slider value to type an exact number.
 *   **Config System:** Built-in Save/Load system using `writefile`/`readfile`.
 *   **Element Features:**
     *   Multi-select Dropdowns with search.
@@ -26,11 +31,11 @@ A modern, highly customizable, and optimized UI Library for Roblox scripts. Feat
 Load the library into your script using `loadstring`.
 
 ```lua
-local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/ImInsane-1337/neverlose-ui/refs/heads/main/source/library.lua"))()
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/sickletone/silly-ui/refs/heads/main/source/library.lua"))()
 ```
 
 ### Basic Setup
-Here is a quick example of how to set up a window, a tab, and a section.
+Here is a quick example of how to set up a window, a tab, and a section. See [example.lua](example.lua) for a full showcase of every component.
 
 ```lua
 local Window = Library:Window({
@@ -40,8 +45,8 @@ local Window = Library:Window({
     MenuKeybind = Enum.KeyCode.End
 })
 
-local Page = Window:Page({Name = "Ragebot", Icon = "rbxassetid://..."})
-local Section = Page:Section({Name = "Main Settings", Side = 1}) -- Side 1 (Left) or 2 (Right)
+local Page = Window:Page({Name = "Ragebot", Icon = "lucide:crosshair"})
+local Section = Page:Section({Name = "Main Settings", Icon = "lucide:settings", Side = 1}) -- Side 1 (Left) or 2 (Right)
 ```
 
 ---
@@ -98,6 +103,8 @@ local MySlider = Section:Slider({
 })
 ```
 
+**Tip:** Double-click (or double-tap) the value on the right side of a slider to type an exact value instead of dragging.
+
 ### 3. Dropdowns
 Dropdowns support single and multi-selection, as well as searching.
 
@@ -151,6 +158,51 @@ MyToggle:Colorpicker({ Default = Color3.new(1,1,1) })
 MyToggle:Keybind({ Default = Enum.KeyCode.X })
 ```
 
+### 5. Icons
+Tabs (pages), sections and buttons accept icons from the [Molto icon registry](https://molto.pages.dev/icons). Use `"provider:name"`, an icon table, or a normal Roblox asset id.
+
+```lua
+Library:SetIconProvider("lucide") -- Default provider for icons without a prefix
+
+local Combat = Window:Page({Name = "Combat", Icon = "lucide:crosshair"})
+local Aimbot = Combat:Section({Name = "Aimbot", Icon = "phosphor:gear"})
+
+-- Every provider works:
+-- lucide | tabler | heroicons | phosphor | fluent | solar | material
+local Visuals = Window:Page({
+    Name = "Visuals",
+    Icon = { Provider = "tabler", Name = "eye" }
+})
+
+-- You can change an icon at any time:
+Combat:SetIcon("heroicons:fire")
+Aimbot:SetIcon("material:swords")
+
+-- Roblox asset ids are still supported
+Window:Page({Name = "Legacy", Icon = "1234567890"})
+```
+
+Icons are loaded lazily through [Molto](https://github.com/notpoiu/Molto), so the first icon of each provider is downloaded on demand. If the executor cannot load Molto, numeric asset ids keep working as before.
+
+### 6. Sub Tabs
+Sub tabs render in a bar at the top of a page and keep their own columns and sections. Create one with `Page:SubTab(...)` and add sections through it.
+
+```lua
+local Combat = Window:Page({Name = "Combat", Icon = "lucide:crosshair"})
+
+local AimbotTab = Combat:SubTab({Name = "Aimbot", Icon = "lucide:target"})
+local WeaponsTab = Combat:SubTab({Name = "Weapons", Icon = "lucide:sword"})
+
+-- Each sub tab has its own left/right columns
+AimbotTab:Section({Name = "Aimbot", Icon = "lucide:crosshair", Side = 1})
+WeaponsTab:Section({Name = "Weapons", Icon = "lucide:sword", Side = 2})
+
+-- Sub tab icons can be changed at any time
+AimbotTab:SetIcon("phosphor:crosshair")
+```
+
+If a page has sub tabs, `Page:Section(...)` automatically creates the section on the currently selected sub tab.
+
 ---
 
 ## 🖥️ Event Logger
@@ -175,10 +227,35 @@ Library:Log("Target missed", 3, Color3.fromRGB(255, 0, 0))
 
 ## ⚙️ Settings & Configs
 
-To add the built-in Settings page (which includes Menu Scale, Config Manager, Watermark toggle, etc.), simply call:
+To add the built-in Settings page (which includes the config manager, watermark toggle, keybind list toggle and auto resize toggle), simply call:
 
 ```lua
 Library:CreateSettingsPage(Window)
+```
+
+### Config Manager
+The Settings page ships with a full config manager:
+
+*   **Name** field for the config file.
+*   **Create**, **Load**, **Overwrite**, **Delete** and **Refresh List**.
+*   **Set Auto Load** / **Remove Auto Load** — the chosen config is loaded automatically when the Settings page is created.
+*   **Export to Clipboard** / **Import from Clipboard** — copies the config JSON out and writes a pasted config back.
+
+Configs are plain JSON files in `Library.Folders.Configs`. The same actions are available from code:
+
+```lua
+Library:GetConfig()                     -- JSON string of every flag
+Library:LoadConfig(ReadFile(path))      -- load JSON
+Library:DeleteConfig("myconfig.json")
+Library:RefreshConfigsList(dropdown)
+
+Library:SetAutoLoadConfig("myconfig.json")
+Library:GetAutoLoadConfig()
+Library:ClearAutoLoadConfig()
+Library:LoadAutoLoadConfig()            -- also called at the end of CreateSettingsPage
+
+Library:SetClipboard(Library:GetConfig())
+Library:GetClipboard()
 ```
 
 ### Menu Scale
@@ -190,6 +267,22 @@ Library.CurrentScale = 1.25
 -- You must trigger a refresh on objects if setting manually, 
 -- so it is recommended to use the built-in Settings Page dropdown.
 ```
+
+---
+
+## 🪟 Window Resizing & Auto Resize
+
+Drag any edge of the window, or the three-line **corner grip** in the bottom-right corner, to resize it. The grip follows the mouse/touch instantly and stops at the minimum size.
+
+```lua
+-- Double-click the corner grip to restore the default 677x644 size.
+Window:SetSize(800, 600)      -- Resize programmatically (tweened)
+Window:GetSize()              -- Current size as a Vector2
+Window:SetAutoResize(false)   -- Stop the window from fitting itself to the screen
+Window:FitToViewport()        -- Shrink/re-center the window inside the current screen
+```
+
+Auto Resize is enabled by default: when the game window or device orientation changes, the window is shrunk (never below the minimum size) so it stays on screen. Disable it per window with `AutoResize = false`, or from the Settings page toggle.
 
 ---
 
@@ -230,7 +323,7 @@ Library:Unload()
 ## 📝 Full Example Script
 
 ```lua
-local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/ImInsane-1337/neverlose-ui/refs/heads/main/source/library.lua"))()
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/sickletone/silly-ui/refs/heads/main/source/library.lua"))()
 
 -- Enable Logs
 Library.LogsEnabled = true
@@ -242,8 +335,12 @@ local Window = Library:Window({
     MenuKeybind = Enum.KeyCode.RightShift
 })
 
-local MainTab = Window:Page({Name = "Combat", Icon = "rbxassetid://123..."})
-local MainSection = MainTab:Section({Name = "Aimbot", Side = 1})
+local MainTab = Window:Page({Name = "Combat", Icon = "lucide:crosshair"})
+local MainSection = MainTab:Section({Name = "Aimbot", Icon = "lucide:sword", Side = 1})
+
+-- Icons can be swapped at any time; see https://molto.pages.dev/icons
+MainTab:SetIcon("phosphor:crosshair")
+MainSection:SetIcon("tabler:sword")
 
 local AimToggle = MainSection:Toggle({
     Name = "Enabled",

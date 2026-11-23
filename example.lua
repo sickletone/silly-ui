@@ -99,7 +99,7 @@ local AimbotToggle = AimbotSection:Toggle({
     end,
 })
 
--- Elements nested inside a toggle
+-- Colorpicker nested inside a toggle
 AimbotToggle:Colorpicker({
     Name = "FOV Color",
     Flag = "AimbotColor",
@@ -109,7 +109,7 @@ AimbotToggle:Colorpicker({
     end,
 })
 
-AimbotToggle:Keybind({
+AimbotSection:Keybind({
     Name = "Aimbot Key",
     Flag = "AimbotBind",
     Default = Enum.KeyCode.Q,
@@ -278,7 +278,7 @@ EspToggle:Colorpicker({
     Default = Color3.fromRGB(255, 80, 80),
 })
 
-EspToggle:Keybind({
+EspSection:Keybind({
     Name = "ESP Toggle",
     Flag = "ESPBind",
     Default = Enum.KeyCode.X,

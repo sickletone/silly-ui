@@ -13,7 +13,7 @@ A modern, highly customizable, and optimized UI Library for Roblox scripts. Feat
     *   Draggable log container with "Smart Snapping" to the center of the screen.
     *   Auto-sizing logs based on text length.
     *   Stacking animations.
-*   **Nested Elements:** Support for placing Colorpickers and Keybinds *inside* Toggles.
+*   **Nested Colorpickers:** Colorpickers can be placed *inside* Toggles.
 *   **Sub Tabs:** Pages can contain a sub tab bar, each with its own columns and sections.
 *   **Config Manager:** Create, load, overwrite, delete, refresh, auto-load, and import/export configs through the clipboard.
 *   **Window Resizing:** Drag any edge or the bottom-right corner grip, with an optional Auto Resize mode.

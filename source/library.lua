@@ -1491,7 +1491,7 @@ local Library do
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
                 
-                if not Data.Parent2.Instance:FindFirstChild("nig") then
+                if Data.Parent2 and not Data.Parent2.Instance:FindFirstChild("nig") then
                     Items["PaletteIcon"] = Instances:Create("ImageLabel", {
                         Parent = Data.Parent2.Instance,
                         ImageColor3 = FromRGB(141, 141, 150),
@@ -2227,7 +2227,9 @@ local Library do
                         return
                     end
 
-                    if Library:IsMouseOverFrame(Items["ColorpickerWindow"]) or Library:IsMouseOverFrame(Items["PaletteIcon"]) and not Data.Section.IsSettings then
+                    local PaletteHovered = Items["PaletteIcon"] and Library:IsMouseOverFrame(Items["PaletteIcon"])
+
+                    if Library:IsMouseOverFrame(Items["ColorpickerWindow"]) or PaletteHovered and not Data.Section.IsSettings then
                         return
                     end
 
@@ -3581,7 +3583,10 @@ local Library do
                     Flag = "MenuBind",
                     Default = Enum.KeyCode.Z,
                     Callback = function(Value)
-                        Window:SetOpen(Value)
+                        -- This callback can fire while the Window is still being built
+                        if Window.SetOpen then
+                            Window:SetOpen(Value)
+                        end
                     end
                 })
 
@@ -3850,7 +3855,6 @@ local Library do
                         for _, Value2 in Value:GetAllSections() do
                             task.spawn(function()
                                 Value2:TweenElements(true)
-                                Library:RefreshConfigsList(ConfigsDropdown)
                             end)
                         end
                     end
@@ -5551,8 +5555,28 @@ local Library do
             }
 
             local Items = { } do 
-                Items["Toggle"] = Instances:Create("TextButton", {
+                Items["Container"] = Instances:Create("Frame", {
                     Parent = Toggle.Section.Items["Content"].Instance,
+                    Name = "\0",
+                    BackgroundTransparency = 1,
+                    Size = UDim2New(1, 0, 0, 18),
+                    AutomaticSize = Enum.AutomaticSize.Y,
+                    BorderColor3 = FromRGB(0, 0, 0),
+                    ZIndex = 2,
+                    BorderSizePixel = 0,
+                    BackgroundColor3 = FromRGB(255, 255, 255)
+                })
+
+                Instances:Create("UIListLayout", {
+                    Parent = Items["Container"].Instance,
+                    Name = "\0",
+                    FillDirection = Enum.FillDirection.Vertical,
+                    Padding = UDimNew(0, 0),
+                    SortOrder = Enum.SortOrder.LayoutOrder
+                })
+
+                Items["Toggle"] = Instances:Create("TextButton", {
+                    Parent = Items["Container"].Instance,
                     Name = "\0",
                     FontFace = Library.Font,
                     TextColor3 = FromRGB(0, 0, 0),
@@ -5562,6 +5586,7 @@ local Library do
                     BackgroundTransparency = 1,
                     BorderSizePixel = 0,
                     Size = UDim2New(1, 0, 0, 18),
+                    LayoutOrder = 1,
                     ZIndex = 2,
                     TextSize = 14,
                     BackgroundColor3 = FromRGB(255, 255, 255)
@@ -5954,8 +5979,35 @@ local Library do
                 return Settings
             end
 
+            local function GetSubElements()
+                if not Items["SubElements"] then
+                    Items["SubElements"] = Instances:Create("Frame", {
+                        Parent = Items["Container"].Instance,
+                        Name = "\0",
+                        Size = UDim2New(1, 0, 0, 30),
+                        LayoutOrder = 2,
+                        BackgroundTransparency = 1,
+                        BorderColor3 = FromRGB(0, 0, 0),
+                        ZIndex = 2,
+                        BorderSizePixel = 0,
+                        BackgroundColor3 = FromRGB(255, 255, 255)
+                    })
+
+                    Instances:Create("UIListLayout", {
+                        Parent = Items["SubElements"].Instance,
+                        Name = "\0",
+                        VerticalAlignment = Enum.VerticalAlignment.Center,
+                        FillDirection = Enum.FillDirection.Horizontal,
+                        Padding = UDimNew(0, 5),
+                        SortOrder = Enum.SortOrder.LayoutOrder
+                    })
+                end
+
+                return Items["SubElements"]
+            end
+
             function Toggle:SetVisibility(Bool)
-                Items["Toggle"].Instance.Visible = Bool 
+                Items["Container"].Instance.Visible = Bool
             end
 
             function Toggle:Colorpicker(Data)
@@ -5973,7 +6025,7 @@ local Library do
                 }
 
                 local NewColorpicker, ColorpickerItems = Library:CreateColorpicker({
-                    Parent = Items["SubElements"],
+                    Parent = GetSubElements(),
                     Page = Colorpicker.Page,
                     Section = Colorpicker.Section,
                     Flag = Colorpicker.Flag,
@@ -5993,16 +6045,16 @@ local Library do
                     Page = Toggle.Page,
                     Section = Toggle.Section,
 
+                    Name = Data.Name or Data.name or "Keybind",
                     Flag = Data.Flag or Data.flag or Library:NextFlag(),
                     Default = Data.Default or Data.default or Enum.KeyCode.E,
                     Callback = Data.Callback or Data.callback or function() end,
                     Mode = Data.Mode or Data.mode or "Toggle"
                 }
 
-                local NewKeybind, KeybindItems = Library:CreateKeybind({
-                    Parent = Items["SubElements"],
-                    Page = Keybind.Page,
-                    Section = Keybind.Section,
+                -- Keybinds read best as regular section rows, so add one below the toggle
+                local NewKeybind = Library.Sections.Keybind(Toggle.Section, {
+                    Name = Keybind.Name or Toggle.Name .. " Keybind",
                     Flag = Keybind.Flag,
                     Default = Keybind.Default,
                     Mode = Keybind.Mode,
@@ -7674,7 +7726,7 @@ local Library do
                     local RealKey = Key.Key == "Backspace" and "None" or Key.Key
                     Keybind.Key = tostring(Key.Key)
 
-                    if Key.ModeSelected then
+                    if Key.ModeSelected or (type(Key.Mode) == "string" and TableFind({"Toggle", "Hold", "Always"}, Key.Mode)) then
                         Keybind.ModeSelected = Key.Mode
                         Keybind:SetMode(Key.Mode)
                     else
@@ -8334,8 +8386,14 @@ local Library do
             end
 
             function Dropdown:Refresh(List)
-                for Index, Value in Dropdown.Options do 
-                    Dropdown:Remove(Value.Name)
+                local OptionsToRemove = { }
+
+                for Name, _ in pairs(Dropdown.Options) do
+                    TableInsert(OptionsToRemove, Name)
+                end
+
+                for _, Name in OptionsToRemove do
+                    Dropdown:Remove(Name)
                 end
 
                 for Index, Value in List do 
